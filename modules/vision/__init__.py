@@ -1,1 +1,1 @@
-from .image_processor import extract_frames
+from .image_processor import extract_frames, extract_frames_fast
