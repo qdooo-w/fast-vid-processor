@@ -12,3 +12,8 @@ audioop-lts
 --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cpu/
 paddlepaddle==3.2.0
 paddleocr
+
+#线上视频处理
+ffmpeg-python
+Requests==2.32.5
+static_ffmpeg==3.0
