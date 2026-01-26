@@ -62,7 +62,8 @@ def download_audio(data,range = '0'):
   with open(filepath,'wb') as f:
     for chunk in response.iter_content(1024*1024):
       f.write(chunk)
-  fix_audio_duration(filepath)
+  if range!='0':
+    fix_audio_duration(filepath)
 
 def download_videoshot(URL):
   """
@@ -107,8 +108,11 @@ def download_subtitle(URL):
   
 #https://www.bilibili.com/video/BV1d1ktBCEaJ/?spm_id_from=333.1007.tianma.1-3-3.click&vd_source=ede24bcc29b6f6c3df591e75217018c8
 if __name__ == "__main__":
-  URL = input("URL:")
-  download_videoshot(URL)
+  
+  os.makedirs('Audio',exist_ok=True)
+  while True:
+    URL = input("URL:")
+    download_audio(get_playinfo_data(URL))
   #playinfo_data = get_playinfo_data(URL)
   #baseUrl = playinfo_data["dash"]["audio"][0]["baseUrl"]
   #index_range = playinfo_data["dash"]["audio"][0]["SegmentBase"]["indexRange"]
