@@ -2,7 +2,7 @@ import ffmpeg
 import os
 from typing import Dict, List, Optional, Tuple
 
-os.environ["DISABLE_MODEL_SOURCE_CHECK"]='True'
+
 
 class Separator:
     """
@@ -11,7 +11,7 @@ class Separator:
     def __init__(self):
         # 初始化不再绑定具体文件，作为一个通用的工具类
         pass
-
+        os.environ["DISABLE_MODEL_SOURCE_CHECK"]='True'
     def _prepare_paths(self, input_path: str, output_dir: Optional[str] = None) -> Tuple[str, str, str]:
         """
         内部辅助函数：计算输出文件名和确定存放目录。
@@ -53,7 +53,8 @@ class Separator:
         for i, _ in enumerate(audio_streams):
             out_file = os.path.join(audio_dir, f"{name}_audio_{i}.mp3")
             # map='a:i' 表示提取第 i 路音轨
-            ffmpeg.input(input_path).output(out_file, map=f'a:{i}', acodec='libmp3lame').run(overwrite_output=True)
+            ffmpeg.input(input_path).output(out_file, map=f'a:{i}', acodec='libmp3lame',ar='44100',        # 采样率 44.1kHz audio_bitrate='128k', # 码率 128kbps
+sample_fmt='s16p').run(overwrite_output=True)
             extracted_files.append(out_file)
         return extracted_files
 

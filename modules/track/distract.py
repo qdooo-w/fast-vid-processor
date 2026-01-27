@@ -38,18 +38,31 @@ def distractor(input_path: str, output_dir: Optional[str] = None) -> Optional[st
         return None
 
     try:
-        # 保持原本的所有参数配置不动
-        separator = Separator(output_format="mp3",output_single_stem="Vocals",output_dir=output_dir,use_soundfile=True,mdxc_params={ "hop_length": 1024,"segment_size": 256,"overlap": 0.1,"batch_size": 1,"enable_denoise": True })
+        # 优化：移除 use_soundfile=True 参数，直接使用 MP3 格式
+        separator = Separator(
+            output_format="mp3",
+            output_single_stem="Vocals",
+            output_dir=output_dir,
+            mdx_params={
+                "hop_length": 1024,
+                "segment_size": 256,
+                "overlap": 0.1,
+                "batch_size": 1,
+                "enable_denoise": True
+            }
+        )
         separator.load_model(model_filename=MODEL_PATH)
         
-        fliename=os.path.basename(input_path)
-        name=os.path.splitext(fliename)[0]
-        output_names={"Vocals":f"{name}_vocal"}
+        filename = os.path.basename(input_path)
+        name = os.path.splitext(filename)[0]
         
         separator.separate(audio_file_path=input_path)
         
-        print("分离人声和背景完成，输出文件夹：", output_dir)
-        return os.path.join(output_dir,output_names["Vocals"]+".mp3")
+        mp3_output_path = os.path.join(output_dir, f"{name}_Vocals.mp3")
+        
+        print(f"分离人声和背景完成，输出文件夹：{output_dir}")
+        return mp3_output_path
+            
     except Exception as e:
         # 捕获可能的 AI 模型执行错误或权限错误
         print(f"分离过程中出现意外错误: {e}")
