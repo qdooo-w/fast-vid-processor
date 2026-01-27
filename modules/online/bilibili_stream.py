@@ -3,15 +3,18 @@ import requests
 
 class BilibiliStream:
   """
-  Bilibili音轨/视轨对象
+  Bilibili 音频/视频流解析对象，专门用于处理 fMP4 (DASH) 格式的媒体索引。
+  它能够解析 sidx (Segment Index) 盒子，从而实现对流媒体的“切片级”精准控制与下载。
   """
 
   def __init__(self, url, index_range) -> None:
     """
-    初始化音轨/视轨对象
+    初始化流对象。
 
-    :param url: 音轨/视轨的baseUrl
-    :param index_range: html中获取index_range所在字节数
+    :param url: 媒体流的 baseUrl (通常来自 PlayInfo)
+    :type url: str
+    :param index_range: 索引数据所在的字节 range，格式如 "0-2600"
+    :type index_range: str
     """
     self.url = url
     self.index_range = index_range
@@ -19,86 +22,83 @@ class BilibiliStream:
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
       "Referer": "https://www.bilibili.com/"
     }
-    self.segments = []
-    #存储格式: [{'offset':int,'size':int,'duration':float}]
+    self.segments = [] # 存储格式: [{'id':int, 'start':int, 'end':int, 'duration':float}]
 
   def load_index(self):
     """
-    下载解析sidx(Segment index)
+    根据 index_range 范围下载并解析 sidx (Segment index) 字节数据。
+    
+    :raise requests.exceptions.RequestException: 如果 HTTP 请求返回的不是 206 Partial Content 时抛出
     """
-    #网络请求二进制数据
-    headers = {**self.headers,"Range":f"bytes={self.index_range}"}
-    response = requests.get(self.url,headers = headers)
+    # 网络请求二进制数据
+    headers = {**self.headers, "Range": f"bytes={self.index_range}"}
+    response = requests.get(self.url, headers=headers)
     if response.status_code != 206:
-      raise requests.exceptions.RequestException(f"HTTP 206状态码期望失败，得到: {response.status_code}")
+      raise requests.exceptions.RequestException(f"HTTP 206 状态码获取失败，得到: {response.status_code}")
     
     binary_data = response.content
-    
-    #通过后面定义的代码解析二进制数据
     self._parse_sidx(binary_data)
   
   def _parse_sidx(self, data):
     """
-    用于解析sidx的内部方法
+    内部私有方法：深度解析 sidx 二进制协议数据。
     
-    :param data: sidx二进制数据
-    :param index_range: 形如'0-2600'格式的sidx字节范围
+    :param data: 从网络下载的原始索引字节
+    :type data: bytes
+    :note: 该方法会计算每个切片的字节偏移（start/end）及物理时长（秒），并存入 self.segments。
     """
-    self.data_start_pos = int(self.index_range.split('-')[1])+1
+    self.data_start_pos = int(self.index_range.split('-')[1]) + 1
     # --- 寻找'sidx'定位符 --- #
-    sidx_offset = data.find(b'sidx') #b指字节序列
+    sidx_offset = data.find(b'sidx')
     if sidx_offset == -1:
       raise ValueError("数据中未找到 sidx 标识，这可能不是一个合法的 fMP4 切片索引")
     
-    # --- 解析TimeScale(时间基准) ---#
-    timescale = struct.unpack_from(">I",data,sidx_offset+12)[0]
-    #struct.unpack_from(格式, 数据, 偏移量)
-    #">I" 表示：大端序读取 4 字节无符号整数
-    #返回一个元组(Tuple)
+    # --- 解析 TimeScale (时间基准) --- #
+    # struct.unpack_from(">I", data, offset) 表示以大端序读取 4 字节无符号整数
+    timescale = struct.unpack_from(">I", data, sidx_offset + 12)[0]
 
-
-    #---解析Reference_count(切片数量)---#
+    # --- 解析 Reference_count (切片总数) --- #
     ref_count_offset = sidx_offset + 26
-    ref_count = struct.unpack_from(">H",data,ref_count_offset)[0]
+    ref_count = struct.unpack_from(">H", data, ref_count_offset)[0]
 
-    print(f"Timescale:{timescale},发现了{ref_count}个切片")
+    print(f"解析成功: 时间基准 {timescale}, 发现 {ref_count} 个切片。")
 
-    #---循环解析切片信息---#
-    #每一个切片12字节 4 Size 4 Duration 4 SAP info
+    # --- 循环解析切片细节 --- #
+    # 每个切片信息占用 12 字节: 4(Size) + 4(Duration) + 4(SAP info)
     cursor = ref_count_offset + 2
     current_byte_offset = self.data_start_pos
     for i in range(ref_count):
-      #解析4字节 size
-      size_raw = struct.unpack_from(">I",data,cursor)[0]
-      size = size_raw & 0x7FFFFFFF
-      #去除第一位的标识位
+      size_raw = struct.unpack_from(">I", data, cursor)[0]
+      size = size_raw & 0x7FFFFFFF # 去除最高位标识位
 
-      #解析4字节 duration
-      duration_raw = struct.unpack_from(">I",data,cursor+4)[0]
-      duration_sec = duration_raw/timescale
+      duration_raw = struct.unpack_from(">I", data, cursor + 4)[0]
+      duration_sec = duration_raw / timescale
 
-      #记录结果
       self.segments.append({
         "id": i,
         "start": current_byte_offset,
         "end": current_byte_offset + size - 1,
-        "duration": round(duration_sec,3)
+        "duration": round(duration_sec, 3)
       })
 
       cursor += 12
       current_byte_offset += size
-    print("解析完成！")
+    print("sidx 索引全量解析完成。")
   
   def get_segments(self):
     """
-    返回切片解析列表
+    获取解析后的切片信息列表。
     
-    :param self: Bilibilistream实例对象
+    :return: 包含所有切片详情的列表
+    :rtype: list
     """
     return self.segments
 
   def cal_duration(self):
-    all_duration = 0
-    for item in self.segments:
-      all_duration += item["duration"]
-    return all_duration
+    """
+    根据所有已解析切片的时长之和计算视频/音频的总长度。
+    
+    :return: 总时长（秒）
+    :rtype: float
+    """
+    return sum(item["duration"] for item in self.segments)

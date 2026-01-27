@@ -3,7 +3,11 @@ import tempfile
 import logging
 from typing import List, Tuple, Dict, Optional
 from pydub import AudioSegment
-from faster_whisper import WhisperModel
+try:
+    from faster_whisper import WhisperModel, BatchedInferencePipeline
+except ImportError:
+    from faster_whisper import WhisperModel
+    BatchedInferencePipeline = None
 
 # 尝试导入 torch 以检测 GPU 可用性；若不可用则设为 None
 try:
@@ -79,6 +83,16 @@ class LongAudioProcessor:
             except Exception as e:
                 logger.warning(f"使用 compute_type={compute_type} 加载模型失败: {e}; 尝试回退到 float32")
                 self.model = WhisperModel(model_size, device=device, compute_type="float32")
+
+            # 尝试启用 BatchedInferencePipeline 以支持 batch_size (仅 cuda 有效)
+            self.batched_mode = False
+            if device == "cuda" and BatchedInferencePipeline is not None:
+                try:
+                    self.model = BatchedInferencePipeline(model=self.model)
+                    self.batched_mode = True
+                    logger.info("已启用 BatchedInferencePipeline 批处理优化")
+                except Exception as e:
+                    logger.warning(f"启用批处理优化失败: {e}")
 
             # 保存设备信息以备后续使用/日志
             self.device = device
@@ -181,14 +195,25 @@ class LongAudioProcessor:
             # 将音频片段导出为指定格式
             audio_segment.export(temp_path, format=self.config.TEMP_AUDIO_FORMAT)
             
+            # 准备转录参数
+            transcribe_kwargs = {
+                "language": "zh",
+                # 引导模型使用标点。这里使用陈述句而非指令，既能提示标点又能避免命令式幻觉
+                "initial_prompt": "简体中文，句子之间有标点符号，断句清晰。",
+                "beam_size": 5,
+                "vad_filter": True,
+                # 放宽静音阈值到 1000ms。过短的阈值(如500ms)会切断句子中间的停顿，导致上下文丢失，模型无法判断标点
+                "vad_parameters": dict(min_silence_duration_ms=2000),
+                "condition_on_previous_text": False
+            }
+
+            # 如果启用了 BatchedInferencePipeline，则添加 batch_size
+            if getattr(self, "batched_mode", False):
+                transcribe_kwargs["batch_size"] = 24
+
             # 使用 faster_whisper 转录（返回 segments iterable 和 info）
             logger.debug(f"正在转录临时文件: {temp_path}")
-            segments_iter, info = self.model.transcribe(
-                temp_path,
-                language="zh",
-                initial_prompt="请使用简体中文转写以下内容。",
-                beam_size=5
-            )
+            segments_iter, info = self.model.transcribe(temp_path, **transcribe_kwargs)
 
             segments_list = list(segments_iter)
             segment_start_s = segment_start_ms / 1000.0
@@ -351,10 +376,6 @@ class LongAudioProcessor:
                 for seg in result["segments"]:
                     time_str = self._format_timestamp_range(seg["start"], seg["end"])
                     f.write(f"\n[{time_str}] {seg['text']}")
-                
-                # 写入完整文本
-                f.write("\n\n## 完整文本\n")
-                f.write(result["text"])
             
             logger.info(f"结果已保存到: {output_path}")
             
