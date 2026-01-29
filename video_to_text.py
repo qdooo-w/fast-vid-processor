@@ -3,17 +3,18 @@ import logging
 from pathlib import Path
 from modules.track import Separator, compresser, distractor
 from modules.audio import LongAudioProcessor
+from modules.online import get_playinfo_data,download_audio
 #配置日志
 logging.basicConfig(level=logging.INFO,format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 def batch_offline_videos(source_dir: str, output_root: str):
   """
-  遍历指定目录，经过音轨提取、人声识别、音频压缩、转录为文字
+  批量处理离线视频，执行音轨提取、人声分离、压缩以及语音转文字转录。
   
-  :param source_dir: 输入文件目录
+  :param source_dir: 包含视频文件的输入目录路径。
   :type source_dir: str
-  :param output_root: 输出文件目录
+  :param output_root: 保存转录结果和中间文件的根目录路径。
   :type output_root: str
   """
   #---初始化组件---
@@ -60,16 +61,49 @@ def batch_offline_videos(source_dir: str, output_root: str):
       logger.error(f"处理{vid}时发生错误:{e}")
       continue
 
+def batch_online_videos(URL: str, output_root: str = "Audio"):
+  """
+  下载并处理在线视频音频，执行人声分离、压缩以及语音转文字转录。
+  
+  :param URL: 视频链接地址。
+  :type URL: str
+  :param output_root: 输出音频和文本文件的根目录，默认为 "Audio"。
+  :type output_root: str
+  """
+  #---初始化组件---
+  logger.info("正在初始化组件...")
+
+  #---下载音频---
+  raw_audio = Path(download_audio(get_playinfo_data(URL)))
+  working_dir = raw_audio.parent
+
+  logger.info(f"正在处理任务:{raw_audio}")
+  vocal_audio, compressed_audio = process_audio(raw_audio,working_dir)
+  #temp_files = [raw_audio,compressed_audio,vocal_audio]
+  #for file in temp_files:
+  #  if os.path.exists(file):
+  #    os.remove(file)
+
+
 def process_audio(raw_audio: Path,working_dir: Path):
-  raw_audio = Path(raw_audio)
-  final_text_file = working_dir / f"{raw_audio.stem}_transcribed.mp3"
+  """
+  处理单个音频文件：提取人声、压缩音频并转录为带时间轴的文字。
+  
+  :param raw_audio: 原始音频文件的路径。
+  :type raw_audio: Path
+  :param working_dir: 存放处理过程中产生的临时文件和最终结果的目录。
+  :type working_dir: Path
+  :return: 包含 (分离后的人声音频路径, 压缩后的音频路径) 的元组。
+  :rtype: tuple[str, str]
+  """
+  final_text_file = working_dir / f"{raw_audio.stem}_transcribed.txt"
   processer = LongAudioProcessor(model_size="medium")
   #1.提取人声(纯纯bug)
   logger.info(f"正在提取音频人声: {raw_audio}")
   vocal_audio = distractor(str(raw_audio),str(working_dir))
   if not vocal_audio:
     logger.warning(f"人声提取失败:{raw_audio}")
-    vocal_audio = raw_audio
+    vocal_audio = str(raw_audio)
 
   #2.压缩音频
   logger.info(f"正在压缩音频")
@@ -77,7 +111,7 @@ def process_audio(raw_audio: Path,working_dir: Path):
 
   if not compressed_audio:
     logger.warning(f"未能成功处理音频{vocal_audio}")
-    compressed_audio = raw_audio
+    compressed_audio = str(raw_audio)
   #3.音频转文字
   result=processer.process_long_audio(str(compressed_audio))
   processer.save_transcription_with_timestamps(result,str(final_text_file))
@@ -87,8 +121,8 @@ def process_audio(raw_audio: Path,working_dir: Path):
 
 
 if __name__ == "__main__":
-  E_DRIVE_PATH = "E:/"
-  RESULT_OUTPUT = "E:/result_text"
+  E_DRIVE_PATH = ""
+  RESULT_OUTPUT = "result_text"
 
-  batch_offline_videos(E_DRIVE_PATH,RESULT_OUTPUT)
+  batch_online_videos("https://www.bilibili.com/video/BV1L5kFBwERZ/?spm_id_from=333.1007.tianma.1-3-3.click&vd_source=ede24bcc29b6f6c3df591e75217018c8")
 

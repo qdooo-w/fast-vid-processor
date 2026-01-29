@@ -62,7 +62,7 @@ def download_audio(data, range='0'):
   baseUrl = data['dash']['audio'][0]['baseUrl']
   filename = f"{data['title']}.m4a"
   filepath = os.path.join(AUDIO_PATH, filename)
-  
+  os.makedirs('Audio',exist_ok=True)
   headers = {**HEADERS}
   if range != '0':
     headers["Range"] = f"bytes={range}"
@@ -81,6 +81,7 @@ def download_audio(data, range='0'):
   if range != '0':
     fix_audio_duration(filepath)
   print(f"音频保存成功: {filepath}")
+  return filepath
 
 def download_videoshot(URL):
   """
@@ -172,8 +173,6 @@ def download_subtitle(URL):
 
 #https://www.bilibili.com/video/BV1d1ktBCEaJ/?spm_id_from=333.1007.tianma.1-3-3.click&vd_source=ede24bcc29b6f6c3df591e75217018c8
 if __name__ == "__main__":
-  
-  os.makedirs('Audio',exist_ok=True)
   log = BilibiliLoginManager()
   log.check_login_status()
   Session.headers.update(HEADERS)
