@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Upload, 
   FileVideo, 
@@ -13,7 +13,8 @@ import {
   Plus,
   Trash2,
   Edit2,
-  Check
+  Check,
+  VideoOff
 } from 'lucide-react';
 
 // --- 配置区域 ---
@@ -23,6 +24,7 @@ import {
 const MOCK_MODE = true; 
 
 const API_BASE_URL = 'http://localhost:8000/api/v1';
+const LOCAL_STORAGE_KEY = 'video_asr_tasks_v1';
 
 // --- 类型定义 ---
 
@@ -105,6 +107,7 @@ export default function VideoASRApp() {
   const [tasks, setTasks] = useState<VideoTask[]>([]);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null); // null 代表在"添加视频"页面
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
+  const [isLoaded, setIsLoaded] = useState(false); // 标记是否已完成初始化加载
   
   // 重命名相关状态
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
@@ -118,6 +121,104 @@ export default function VideoASRApp() {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
   };
+
+  // --- 轮询逻辑 (使用 useCallback 以便在 Effect 中依赖) ---
+  const stopPolling = useCallback((taskId: string) => {
+    if (pollIntervals.current[taskId]) {
+      clearInterval(pollIntervals.current[taskId]);
+      delete pollIntervals.current[taskId];
+    }
+  }, []);
+
+  const startPolling = useCallback((taskId: string) => {
+    if (pollIntervals.current[taskId]) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const data = await apiService.checkStatus(taskId);
+        
+        setTasks(prev => prev.map(t => {
+          if (t.id !== taskId) return t;
+
+          // 更新状态
+          const updatedTask = { 
+            ...t, 
+            status: data.status as any,
+            progress: data.progress || t.progress,
+            result: data.result || null
+          };
+
+          // 如果成功或失败，停止轮询
+          if (data.status === 'success' || data.status === 'error') {
+            stopPolling(taskId);
+            if (data.status === 'success') {
+                showToast(`视频 "${t.name}" 处理完成`, 'success');
+            }
+          }
+          return updatedTask;
+        }));
+
+      } catch (error) {
+        console.error("Polling error", error);
+        // 可以在这里决定是否停止轮询，或者重试几次
+      }
+    }, 2000); // 每2秒轮询一次
+
+    pollIntervals.current[taskId] = interval;
+  }, [stopPolling]); // 依赖 stopPolling
+
+  // --- 持久化逻辑 ---
+
+  // 1. 初始化加载
+  useEffect(() => {
+    const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (saved) {
+      try {
+        const parsedTasks = JSON.parse(saved);
+        setTasks(parsedTasks);
+      } catch (e) {
+        console.error("Failed to load tasks", e);
+      }
+    }
+    setIsLoaded(true);
+  }, []);
+
+  // 2. 自动保存 (仅在加载完成后，且 tasks 变化时)
+  useEffect(() => {
+    if (!isLoaded) return;
+    
+    const tasksToSave = tasks.map(t => ({
+      ...t,
+      file: null, // File 对象无法被序列化，且刷新后失效
+      // 如果 file 不存在（刷新后），则清空 previewUrl，因为 blob URL 刷新后也会失效
+      previewUrl: t.file ? t.previewUrl : '' 
+    }));
+    
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(tasksToSave));
+  }, [tasks, isLoaded]);
+
+  // 3. 恢复轮询 (仅在加载完成时检查一次)
+  useEffect(() => {
+    if (!isLoaded) return;
+    
+    tasks.forEach(t => {
+      // 如果任务处于处理中，且当前没有在轮询，则恢复轮询
+      if ((t.status === 'pending' || t.status === 'processing') && !pollIntervals.current[t.id]) {
+        console.log(`Resuming polling for task ${t.id}`);
+        startPolling(t.id);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoaded]); // 只在初始化加载完成时触发一次
+
+  // 组件卸载时清理所有轮询
+  useEffect(() => {
+    return () => {
+      Object.values(pollIntervals.current).forEach(clearInterval);
+    };
+  }, []);
+
+  // --- 交互逻辑 ---
 
   // 处理文件上传
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -168,13 +269,9 @@ export default function VideoASRApp() {
   const deleteTask = (e: React.MouseEvent, taskId: string) => {
     e.stopPropagation(); // 防止触发 active 切换
     
-    // 直接删除，不使用 confirm 弹窗
     setTasks(prev => prev.filter(t => t.id !== taskId));
-    
-    // 停止轮询
     stopPolling(taskId);
 
-    // 如果删除的是当前选中的任务，回到首页
     if (activeTaskId === taskId) {
       setActiveTaskId(null);
     }
@@ -205,58 +302,6 @@ export default function VideoASRApp() {
     e?.stopPropagation();
     setEditingTaskId(null);
   };
-
-  // 轮询逻辑
-  const startPolling = (taskId: string) => {
-    if (pollIntervals.current[taskId]) return;
-
-    const interval = setInterval(async () => {
-      try {
-        const data = await apiService.checkStatus(taskId);
-        
-        setTasks(prev => prev.map(t => {
-          if (t.id !== taskId) return t;
-
-          // 更新状态
-          const updatedTask = { 
-            ...t, 
-            status: data.status as any,
-            progress: data.progress || t.progress,
-            result: data.result || null
-          };
-
-          // 如果成功或失败，停止轮询
-          if (data.status === 'success' || data.status === 'error') {
-            stopPolling(taskId);
-            if (data.status === 'success') {
-                showToast(`视频 "${t.name}" 处理完成`, 'success');
-            }
-          }
-          return updatedTask;
-        }));
-
-      } catch (error) {
-        console.error("Polling error", error);
-        // 可以在这里决定是否停止轮询，或者重试几次
-      }
-    }, 2000); // 每2秒轮询一次
-
-    pollIntervals.current[taskId] = interval;
-  };
-
-  const stopPolling = (taskId: string) => {
-    if (pollIntervals.current[taskId]) {
-      clearInterval(pollIntervals.current[taskId]);
-      delete pollIntervals.current[taskId];
-    }
-  };
-
-  // 组件卸载时清理所有轮询
-  useEffect(() => {
-    return () => {
-      Object.values(pollIntervals.current).forEach(clearInterval);
-    };
-  }, []);
 
   // --- 渲染辅助函数 ---
 
@@ -451,12 +496,20 @@ export default function VideoASRApp() {
                 
                 {/* 左侧：视频预览与进度 */}
                 <div className="flex flex-col space-y-6">
-                  <div className="bg-black rounded-xl overflow-hidden shadow-lg aspect-video relative group">
-                    <video 
-                      src={activeTask.previewUrl} 
-                      controls 
-                      className="w-full h-full object-contain"
-                    />
+                  <div className="bg-black rounded-xl overflow-hidden shadow-lg aspect-video relative group flex items-center justify-center bg-slate-900">
+                    {activeTask.previewUrl ? (
+                        <video 
+                          src={activeTask.previewUrl} 
+                          controls 
+                          className="w-full h-full object-contain"
+                        />
+                    ) : (
+                        <div className="text-slate-500 flex flex-col items-center p-8">
+                            <VideoOff className="w-12 h-12 mb-2 opacity-50"/>
+                            <p className="text-sm">本地预览已失效</p>
+                            <p className="text-xs opacity-60 mt-1">(刷新页面后无法访问本地临时文件)</p>
+                        </div>
+                    )}
                   </div>
 
                   {/* 进度卡片 */}
