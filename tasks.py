@@ -25,5 +25,3 @@ def extract_audio_task(self,input_file):
     "output_file": output_file,
     "status": "success"
   }
-
-extract_audio_task.delay("2.mp4")  # type: ignore

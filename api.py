@@ -1,11 +1,22 @@
 from fastapi import FastAPI, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from celery import uuid, Task
 from celery.result import AsyncResult
-from tasks import extract_audio_task #type: ignore
+from tasks import extract_audio_task, app as celery_app  # type: ignore
 from utils import save_upload_file
 from config import settings
 import os
 app = FastAPI()
+
+# 配置 CORS，允许前端跨域访问
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 这里的 "*" 可以改为你的前端地址 "http://localhost:3000"
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 extract_audio_task: Task = extract_audio_task 
 
@@ -22,7 +33,7 @@ def create_task(task_type: str, file: UploadFile=File(...)):
   #保存文件
   _,ext = os.path.splitext(file.filename or '')
   base_dir = settings.DEFAULT_INPUT_SAVE_DIR
-  save_path = os.path.join(base_dir,f"{task_id}.{ext}")
+  save_path = os.path.join(base_dir,f"{task_id}{ext}")
   save_upload_file(file,save_path)
 
   if task_type=="extract_audio":
@@ -44,9 +55,41 @@ def get_task_status(task_id: str):
   :param task_id: 前端返回给用户的任务id
   :type task_id: str
   """
-  result = AsyncResult(task_id)
+  result = AsyncResult(task_id, app=celery_app)
 
   return {
     "status": result.status,
     "result": result.result if result.ready() else None
   }
+
+@app.get("/download/{task_id}")
+def download_file(task_id: str):
+  """
+  下载任务处理后的文件
+  
+  :param task_id: 任务ID
+  :return: 文件响应
+  """
+  result = AsyncResult(task_id, app=celery_app)
+  
+  if not result.ready():
+    return {"error": "Task not completed yet"}
+  
+  if result.status != 'SUCCESS':
+    return {"error": "Task failed"}
+  
+  task_result = result.result
+  if not task_result:
+    return {"error": "No result data"}
+  
+  file_path = task_result['output_file']
+  
+  if not os.path.exists(file_path):
+    return {"error": f"File not found at: {file_path}"}
+  
+  filename = os.path.basename(file_path)
+  return FileResponse(
+    path=file_path,
+    filename=filename,
+    media_type='application/octet-stream'
+  )
