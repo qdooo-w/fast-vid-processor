@@ -11,7 +11,7 @@ class Config:
     # 基础目录
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     
-    # 数据根目录：优先使用环境变量 DATA_DIR (Docker中设为 /app/data)，否则在本地项目下生成 data 文件夹
+    # 数据根目录：优先使用环境变量 DATA_DIR (Docker 中设为 /data)，否则在本地项目下生成 data 文件夹
     DATA_DIR = os.getenv("DATA_DIR", os.path.join(BASE_DIR, "data"))
 
     # 输入(上传)文件存放处
