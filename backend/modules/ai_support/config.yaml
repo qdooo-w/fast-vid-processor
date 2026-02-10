@@ -69,17 +69,7 @@ prompt_templates:
     5. 改进建议（如果有）
 
     语言：{language}
-    
-  quick_summary: |
-    请用简洁的语言总结以下转录文本：
 
-    {text_content}
-
-    要求：
-    1. 忽略时间戳信息
-    2. 字数在300字以内
-    3. 突出重点内容
-    4. 语言：{language}
     
   conversation_analysis: |
     你是一个专业的对话分析专家。请分析以下对话转录文本：
